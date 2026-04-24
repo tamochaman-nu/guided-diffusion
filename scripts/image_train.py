@@ -22,6 +22,15 @@ def main():
     dist_util.setup_dist()
     logger.configure()
 
+    device = dist_util.dev()
+    if device.type == "cuda":
+        import torch as th
+        gpu_name = th.cuda.get_device_name(device)
+        gpu_mem = th.cuda.get_device_properties(device).total_memory // (1024 ** 2)
+        logger.log(f"using GPU: {gpu_name} ({gpu_mem} MiB)")
+    else:
+        logger.log("using CPU (CUDA not available)")
+
     logger.log("creating model and diffusion...")
     model, diffusion = create_model_and_diffusion(
         **args_to_dict(args, model_and_diffusion_defaults().keys())

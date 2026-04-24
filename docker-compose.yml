@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  guided-diffusion:
+    build: .
+    runtime: nvidia
+    volumes:
+      - .:/app
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /mnt/NAS/vr:/mnt/NAS/vr:rw
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - DISPLAY=$DISPLAY
+      - OPENAI_LOGDIR=/app/checkpoints
+    working_dir: /app
+    stdin_open: true
+    tty: true
+  guided-diffusion-anime:
+    build: .
+    runtime: nvidia
+    shm_size: '8gb'
+    volumes:
+      - .:/app
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /mnt/NAS/vr:/mnt/NAS/vr:rw
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - DISPLAY=$DISPLAY
+      - OPENAI_LOGDIR=/app/checkpoints/anime
+    working_dir: /app
+    stdin_open: true
+    tty: true
