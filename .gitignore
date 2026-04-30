@@ -2,4 +2,4 @@
 __pycache__/
 classify_image_graph_def.pb
 checkpoints/*
-checkpoints/
+checkpoints/checkpoints/
