@@ -7,6 +7,38 @@ https://github.com/hojonathanho/diffusion/blob/1e0dceb3b3495bbe19116a5e1b3596cd0
 import numpy as np
 
 import torch as th
+import torch.nn.functional as F
+
+
+def wavelet_texture_loss(pred_x0, target_x0, level=2):
+    """
+    ウェーブレット高周波成分のMSEロスでテクスチャ学習を強化する。
+    pytorch_wavelets が使える場合はHaar DWT、なければLaplacianフィルタでフォールバック。
+    """
+    try:
+        from pytorch_wavelets import DWTForward
+        xfm = DWTForward(J=level, mode="zero", wave="haar").to(pred_x0.device)
+        # fp16対応: float32にキャストしてからDWT適用
+        pred_f = pred_x0.float()
+        tgt_f = target_x0.float()
+        _, pred_high = xfm(pred_f)
+        _, tgt_high = xfm(tgt_f)
+        loss = sum(F.mse_loss(p, t) for p, t in zip(pred_high, tgt_high))
+        return loss / level
+    except ImportError:
+        # Laplacianフィルタで高周波成分を近似。
+        # カーネルの二乗ノルム ||L||_F^2 = 20 で割ることで DWT と同スケール (O(1)) にする。
+        _LAP_NORM_SQ = 20.0
+
+        def high_freq(x):
+            lap = th.tensor(
+                [[0, -1, 0], [-1, 4, -1], [0, -1, 0]],
+                dtype=x.dtype, device=x.device,
+            )
+            lap = lap.view(1, 1, 3, 3).expand(x.shape[1], -1, -1, -1)
+            return F.conv2d(x, lap, padding=1, groups=x.shape[1])
+
+        return F.mse_loss(high_freq(pred_x0), high_freq(target_x0)) / _LAP_NORM_SQ
 
 
 def normal_kl(mean1, logvar1, mean2, logvar2):

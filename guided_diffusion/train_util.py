@@ -38,6 +38,14 @@ class TrainLoop:
         schedule_sampler=None,
         weight_decay=0.0,
         lr_anneal_steps=0,
+        # CFG
+        use_cfg=False,
+        domain_id=0,
+        p_uncond=0.15,
+        null_domain_id=2,
+        # texture bias
+        texture_bias_alpha=1.0,
+        texture_bias_max_t_frac=0.5,
     ):
         self.model = model
         self.diffusion = diffusion
@@ -58,6 +66,12 @@ class TrainLoop:
         self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
         self.weight_decay = weight_decay
         self.lr_anneal_steps = lr_anneal_steps
+        self.use_cfg = use_cfg
+        self.domain_id = domain_id
+        self.p_uncond = p_uncond
+        self.null_domain_id = null_domain_id
+        self.texture_bias_alpha = texture_bias_alpha
+        self.texture_bias_max_t_frac = texture_bias_max_t_frac
 
         self.step = 0
         self.resume_step = 0
@@ -114,11 +128,14 @@ class TrainLoop:
             self.resume_step = parse_resume_step_from_filename(resume_checkpoint)
             if dist.get_rank() == 0:
                 logger.log(f"loading model from checkpoint: {resume_checkpoint}...")
-                self.model.load_state_dict(
-                    dist_util.load_state_dict(
-                        resume_checkpoint, map_location=dist_util.dev()
-                    )
+                state_dict = dist_util.load_state_dict(
+                    resume_checkpoint, map_location=dist_util.dev()
                 )
+                # use_cfg=True のときは domain_embed が新規層なので strict=False でロード
+                strict = not self.use_cfg
+                missing, unexpected = self.model.load_state_dict(state_dict, strict=strict)
+                if not strict and missing:
+                    logger.log(f"checkpoint missing keys (will be randomly initialized): {missing}")
 
         dist_util.sync_params(self.model.parameters())
 
@@ -186,7 +203,33 @@ class TrainLoop:
                 for k, v in cond.items()
             }
             last_batch = (i + self.microbatch) >= batch.shape[0]
-            t, weights = self.schedule_sampler.sample(micro.shape[0], dist_util.dev())
+            bs = micro.shape[0]
+
+            # --- タイムステップサンプリング (texture bias) ---
+            if self.texture_bias_alpha != 1.0:
+                # U^alpha の変換で小さい t に偏らせる。
+                # max_t_frac でサンプル上限を設けて大きい t でのロス爆発を防ぐ。
+                # 例: max_t_frac=0.5 かつ T=250 → t ∈ [0, 124]
+                t_float = th.rand(bs, device=dist_util.dev()) ** self.texture_bias_alpha
+                t_float = t_float * self.texture_bias_max_t_frac  # 上限クランプ
+                t = (t_float * self.diffusion.num_timesteps).long().clamp(
+                    0, self.diffusion.num_timesteps - 1
+                )
+                weights = th.ones(bs, device=dist_util.dev())
+            else:
+                t, weights = self.schedule_sampler.sample(bs, dist_util.dev())
+
+            # --- CFG: domain_id の設定と unconditional dropout ---
+            if self.use_cfg:
+                domain_ids = th.full(
+                    (bs,), self.domain_id, device=dist_util.dev(), dtype=th.long
+                )
+                mask = th.rand(bs) < self.p_uncond
+                domain_ids[mask] = self.null_domain_id
+                micro_cond["domain_id"] = domain_ids
+                uncond_ratio = mask.float().mean().item()
+            else:
+                uncond_ratio = 0.0
 
             compute_losses = functools.partial(
                 self.diffusion.training_losses,
@@ -211,6 +254,10 @@ class TrainLoop:
             log_loss_dict(
                 self.diffusion, t, {k: v * weights for k, v in losses.items()}
             )
+            # 追加メトリクス
+            logger.logkv_mean("t_mean", t.float().mean().item())
+            if self.use_cfg:
+                logger.logkv_mean("uncond_ratio", uncond_ratio)
             self.mp_trainer.backward(loss)
 
     def _update_ema(self):

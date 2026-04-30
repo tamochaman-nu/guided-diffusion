@@ -63,6 +63,12 @@ def main():
         schedule_sampler=schedule_sampler,
         weight_decay=args.weight_decay,
         lr_anneal_steps=args.lr_anneal_steps,
+        use_cfg=args.use_cfg,
+        domain_id=args.domain_id,
+        p_uncond=args.p_uncond,
+        null_domain_id=args.null_domain_id,
+        texture_bias_alpha=args.texture_bias_alpha,
+        texture_bias_max_t_frac=args.texture_bias_max_t_frac,
     ).run_loop()
 
 
@@ -81,6 +87,13 @@ def create_argparser():
         resume_checkpoint="",
         use_fp16=False,
         fp16_scale_growth=1e-3,
+        # CFG
+        domain_id=0,          # 0=FFHQ, 1=anime
+        p_uncond=0.15,        # unconditional dropout rate
+        null_domain_id=2,     # null domain index (= num_domains)
+        # texture bias
+        texture_bias_alpha=1.0,   # 1.0=uniform, >1.0 biases toward small t
+        texture_bias_max_t_frac=0.5,  # t の上限を T*frac に制限 (0.5=T/2)
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()

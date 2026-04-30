@@ -12,7 +12,7 @@ import numpy as np
 import torch as th
 
 from .nn import mean_flat
-from .losses import normal_kl, discretized_gaussian_log_likelihood
+from .losses import normal_kl, discretized_gaussian_log_likelihood, wavelet_texture_loss
 
 
 def get_named_beta_schedule(schedule_name, num_diffusion_timesteps):
@@ -123,11 +123,13 @@ class GaussianDiffusion:
         model_var_type,
         loss_type,
         rescale_timesteps=False,
+        wavelet_loss_weight=0.0,
     ):
         self.model_mean_type = model_mean_type
         self.model_var_type = model_var_type
         self.loss_type = loss_type
         self.rescale_timesteps = rescale_timesteps
+        self.wavelet_loss_weight = wavelet_loss_weight
 
         # Use float64 for accuracy.
         betas = np.array(betas, dtype=np.float64)
@@ -811,6 +813,16 @@ class GaussianDiffusion:
                 terms["loss"] = terms["mse"] + terms["vb"]
             else:
                 terms["loss"] = terms["mse"]
+
+            if self.wavelet_loss_weight > 0 and self.model_mean_type == ModelMeanType.EPSILON:
+                # epsilon空間でウェーブレットロスを計算する。
+                # x0空間では pred_x0 = sqrt_recip*x_t のスケールが t に強く依存し
+                # (large t で sqrt_recipm1 ≫ 1)、バッチ内の大きい t サンプルが
+                # ロスを支配して勾配爆発を引き起こす。
+                # epsilon はどの t でも O(1) であるため、このスケール問題が解消される。
+                w_loss = wavelet_texture_loss(model_output.float(), noise.float())
+                terms["loss"] = terms["loss"] + self.wavelet_loss_weight * w_loss
+                terms["wavelet_loss"] = w_loss.detach()
         else:
             raise NotImplementedError(self.loss_type)
 

@@ -445,6 +445,8 @@ class UNetModel(nn.Module):
         use_scale_shift_norm=False,
         resblock_updown=False,
         use_new_attention_order=False,
+        use_cfg=False,
+        num_domains=2,
     ):
         super().__init__()
 
@@ -466,6 +468,8 @@ class UNetModel(nn.Module):
         self.num_heads = num_heads
         self.num_head_channels = num_head_channels
         self.num_heads_upsample = num_heads_upsample
+        self.use_cfg = use_cfg
+        self.num_domains = num_domains
 
         time_embed_dim = model_channels * 4
         self.time_embed = nn.Sequential(
@@ -476,6 +480,10 @@ class UNetModel(nn.Module):
 
         if self.num_classes is not None:
             self.label_emb = nn.Embedding(num_classes, time_embed_dim)
+
+        if self.use_cfg:
+            # num_domains個のドメイン + index num_domains がnull/unconditional
+            self.domain_embed = nn.Embedding(num_domains + 1, time_embed_dim)
 
         ch = input_ch = int(channel_mult[0] * model_channels)
         self.input_blocks = nn.ModuleList(
@@ -631,13 +639,14 @@ class UNetModel(nn.Module):
         self.middle_block.apply(convert_module_to_f32)
         self.output_blocks.apply(convert_module_to_f32)
 
-    def forward(self, x, timesteps, y=None):
+    def forward(self, x, timesteps, y=None, domain_id=None):
         """
         Apply the model to an input batch.
 
         :param x: an [N x C x ...] Tensor of inputs.
         :param timesteps: a 1-D batch of timesteps.
         :param y: an [N] Tensor of labels, if class-conditional.
+        :param domain_id: an [N] Tensor of domain IDs for CFG (0=FFHQ, 1=anime, num_domains=null).
         :return: an [N x C x ...] Tensor of outputs.
         """
         assert (y is not None) == (
@@ -650,6 +659,10 @@ class UNetModel(nn.Module):
         if self.num_classes is not None:
             assert y.shape == (x.shape[0],)
             emb = emb + self.label_emb(y)
+
+        if self.use_cfg and domain_id is not None:
+            assert domain_id.shape == (x.shape[0],)
+            emb = emb + self.domain_embed(domain_id)
 
         h = x.type(self.dtype)
         for module in self.input_blocks:

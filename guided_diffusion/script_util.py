@@ -60,6 +60,11 @@ def model_and_diffusion_defaults():
         resblock_updown=False,
         use_fp16=False,
         use_new_attention_order=False,
+        # CFG
+        use_cfg=False,
+        num_domains=2,
+        # wavelet loss
+        wavelet_loss_weight=0.0,
     )
     res.update(diffusion_defaults())
     return res
@@ -95,6 +100,9 @@ def create_model_and_diffusion(
     resblock_updown,
     use_fp16,
     use_new_attention_order,
+    use_cfg=False,
+    num_domains=2,
+    wavelet_loss_weight=0.0,
 ):
     model = create_model(
         image_size,
@@ -113,6 +121,8 @@ def create_model_and_diffusion(
         resblock_updown=resblock_updown,
         use_fp16=use_fp16,
         use_new_attention_order=use_new_attention_order,
+        use_cfg=use_cfg,
+        num_domains=num_domains,
     )
     diffusion = create_gaussian_diffusion(
         steps=diffusion_steps,
@@ -123,6 +133,7 @@ def create_model_and_diffusion(
         rescale_timesteps=rescale_timesteps,
         rescale_learned_sigmas=rescale_learned_sigmas,
         timestep_respacing=timestep_respacing,
+        wavelet_loss_weight=wavelet_loss_weight,
     )
     return model, diffusion
 
@@ -144,6 +155,8 @@ def create_model(
     resblock_updown=False,
     use_fp16=False,
     use_new_attention_order=False,
+    use_cfg=False,
+    num_domains=2,
 ):
     if channel_mult == "":
         if image_size == 512:
@@ -181,6 +194,8 @@ def create_model(
         use_scale_shift_norm=use_scale_shift_norm,
         resblock_updown=resblock_updown,
         use_new_attention_order=use_new_attention_order,
+        use_cfg=use_cfg,
+        num_domains=num_domains,
     )
 
 
@@ -394,6 +409,7 @@ def create_gaussian_diffusion(
     rescale_timesteps=False,
     rescale_learned_sigmas=False,
     timestep_respacing="",
+    wavelet_loss_weight=0.0,
 ):
     betas = gd.get_named_beta_schedule(noise_schedule, steps)
     if use_kl:
@@ -421,6 +437,7 @@ def create_gaussian_diffusion(
         ),
         loss_type=loss_type,
         rescale_timesteps=rescale_timesteps,
+        wavelet_loss_weight=wavelet_loss_weight,
     )
 
 
