@@ -4,6 +4,7 @@ services:
   guided-diffusion:
     build: .
     runtime: nvidia
+    shm_size: '8gb'
     volumes:
       - .:/app
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
@@ -11,10 +12,54 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       - DISPLAY=$DISPLAY
-      - OPENAI_LOGDIR=/app/checkpoints
+      - OPENAI_LOGDIR=/app/checkpoints/ffhq512x512_waveletloss
+      # Training options
+      - NUM_GPUS=1
+      - DATA_DIR=/mnt/NAS/vr/ffhq512x512
+      - IMAGE_SIZE=256
+      - NUM_CHANNELS=128
+      - NUM_RES_BLOCKS=1
+      - NUM_HEADS=4
+      - BATCH_SIZE=32
+      - LR=1e-4
+      - LR_ANNEAL_STEPS=10000
+      - SAVE_INTERVAL=5000
+      # CFG / texture bias / wavelet loss
+      - USE_CFG=True
+      - DOMAIN_ID=0
+      - P_UNCOND=0.15
+      - NULL_DOMAIN_ID=2
+      - TEXTURE_BIAS_ALPHA=2.0
+      - TEXTURE_BIAS_MAX_T_FRAC=0.5
+      - WAVELET_LOSS_WEIGHT=0.1
     working_dir: /app
-    stdin_open: true
-    tty: true
+    command: >
+      sh -c "mpiexec --allow-run-as-root -n $$NUM_GPUS
+      python scripts/image_train.py
+      --attention_resolutions 16
+      --batch_size $$BATCH_SIZE
+      --data_dir $$DATA_DIR
+      --diffusion_steps 1000
+      --image_size $$IMAGE_SIZE
+      --learn_sigma True
+      --lr $$LR
+      --lr_anneal_steps $$LR_ANNEAL_STEPS
+      --noise_schedule linear
+      --num_channels $$NUM_CHANNELS
+      --num_heads $$NUM_HEADS
+      --num_res_blocks $$NUM_RES_BLOCKS
+      --resblock_updown True
+      --save_interval $$SAVE_INTERVAL
+      --timestep_respacing 250
+      --use_checkpoint True
+      --use_cfg $$USE_CFG
+      --domain_id $$DOMAIN_ID
+      --p_uncond $$P_UNCOND
+      --null_domain_id $$NULL_DOMAIN_ID
+      --texture_bias_alpha $$TEXTURE_BIAS_ALPHA
+      --texture_bias_max_t_frac $$TEXTURE_BIAS_MAX_T_FRAC
+      --wavelet_loss_weight $$WAVELET_LOSS_WEIGHT"
+
   guided-diffusion-anime:
     build: .
     runtime: nvidia
@@ -26,7 +71,49 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       - DISPLAY=$DISPLAY
-      - OPENAI_LOGDIR=/app/checkpoints/anime
+      - OPENAI_LOGDIR=/app/checkpoints/anime_waveletloss
+      # Training options
+      - NUM_GPUS=1
+      - DATA_DIR=/mnt/NAS/vr/anime-with-caption-cc0/data/raw/
+      - IMAGE_SIZE=256
+      - NUM_CHANNELS=128
+      - NUM_RES_BLOCKS=1
+      - NUM_HEADS=4
+      - BATCH_SIZE=16
+      - LR=1e-4
+      - LR_ANNEAL_STEPS=10000
+      - SAVE_INTERVAL=5000
+      # CFG / texture bias / wavelet loss
+      - USE_CFG=True
+      - DOMAIN_ID=1
+      - P_UNCOND=0.15
+      - NULL_DOMAIN_ID=2
+      - TEXTURE_BIAS_ALPHA=2.0
+      - TEXTURE_BIAS_MAX_T_FRAC=0.5
+      - WAVELET_LOSS_WEIGHT=0.1
     working_dir: /app
-    stdin_open: true
-    tty: true
+    command: >
+      sh -c "mpiexec --allow-run-as-root -n $$NUM_GPUS
+      python scripts/image_train.py
+      --batch_size $$BATCH_SIZE
+      --data_dir $$DATA_DIR
+      --diffusion_steps 1000
+      --image_size $$IMAGE_SIZE
+      --learn_sigma True
+      --lr $$LR
+      --lr_anneal_steps $$LR_ANNEAL_STEPS
+      --noise_schedule linear
+      --num_channels $$NUM_CHANNELS
+      --num_heads $$NUM_HEADS
+      --num_res_blocks $$NUM_RES_BLOCKS
+      --save_interval $$SAVE_INTERVAL
+      --timestep_respacing 250
+      --use_checkpoint True
+      --use_fp16 True
+      --use_cfg $$USE_CFG
+      --domain_id $$DOMAIN_ID
+      --p_uncond $$P_UNCOND
+      --null_domain_id $$NULL_DOMAIN_ID
+      --texture_bias_alpha $$TEXTURE_BIAS_ALPHA
+      --texture_bias_max_t_frac $$TEXTURE_BIAS_MAX_T_FRAC
+      --wavelet_loss_weight $$WAVELET_LOSS_WEIGHT"
