@@ -1,0 +1,6 @@
+.git
+logs
+data
+datasets
+*.egg-info
+__pycache__

@@ -1,0 +1,103 @@
+x-train-params: &train-params
+  PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+  IMAGE_SIZE: "64"
+  NUM_CHANNELS: "128"
+  NUM_RES_BLOCKS: "3"
+  NUM_HEADS: "4"
+  NUM_HEAD_CHANNELS: "-1"
+  ATTENTION_RESOLUTIONS: "16,8"
+  CHANNEL_MULT: ""
+  DROPOUT: "0.1"
+  LEARN_SIGMA: "True"
+  CLASS_COND: "False"
+  USE_SCALE_SHIFT_NORM: "True"
+  RESBLOCK_UPDOWN: "False"
+  USE_NEW_ATTENTION_ORDER: "False"
+  USE_CHECKPOINT: "False"
+  DIFFUSION_STEPS: "1000"
+  NOISE_SCHEDULE: "cosine"
+  LR: "1e-4"
+  WEIGHT_DECAY: "0.0"
+  BATCH_SIZE: "16"
+  MICROBATCH: "-1"
+  USE_FP16: "False"
+  LR_ANNEAL_STEPS: "0"
+  EMA_RATE: "0.9999"
+  LOG_INTERVAL: "10"
+  SAVE_INTERVAL: "10000"
+  RESUME_CHECKPOINT: ""
+  EXTRA_TRAIN_FLAGS: ""
+
+services:
+  train-anime:
+    build: &build
+      context: .
+      args:
+        BASE_IMAGE: ${BASE_IMAGE:-pytorch/pytorch:2.4.1-cuda12.4-cudnn9-devel}
+    image: &image guided-diffusion:${IMAGE_TAG:-latest}
+    container_name: guided-diffusion-train-anime
+    command: /bin/bash run_train.sh
+    environment:
+      <<: *train-params
+      TRAIN_LOGDIR: /app/logs/anime
+    volumes:
+      - ./:/app
+      - ${HOST_DATA_DIR_ANIME:-./data/anime}:/app/data
+    shm_size: '8gb'
+    stdin_open: true
+    tty: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${GPU_ANIME:-0}']  # 並行学習時にGPUを分ける
+              capabilities: [gpu]
+
+  train-ffhq:
+    build: *build
+    image: *image
+    container_name: guided-diffusion-train-ffhq
+    command: /bin/bash run_train.sh
+    environment:
+      <<: *train-params
+      TRAIN_LOGDIR: /app/logs/ffhq
+    volumes:
+      - ./:/app
+      - ${HOST_DATA_DIR_FFHQ:-./data/ffhq}:/app/data
+    shm_size: '8gb'
+    stdin_open: true
+    tty: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${GPU_FFHQ:-1}']  # 並行学習時にGPUを分ける
+              capabilities: [gpu]
+
+  inference:
+    build: *build
+    image: *image
+    container_name: guided-diffusion-inference
+    command: /bin/bash run_sample.sh
+    environment:
+      <<: *train-params
+      SAMPLE_LOGDIR: /app/logs/sample
+      MODEL_PATH: ""
+      TIMESTEP_RESPACING: ""
+      NUM_SAMPLES: "64"
+      SAMPLE_BATCH_SIZE: "16"
+      USE_DDIM: "False"
+    volumes:
+      - ./:/app
+    shm_size: '8gb'
+    stdin_open: true
+    tty: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

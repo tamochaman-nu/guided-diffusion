@@ -345,12 +345,9 @@ class QKVAttentionLegacy(nn.Module):
         assert width % (3 * self.n_heads) == 0
         ch = width // (3 * self.n_heads)
         q, k, v = qkv.reshape(bs * self.n_heads, ch * 3, length).split(ch, dim=1)
-        scale = 1 / math.sqrt(math.sqrt(ch))
-        weight = th.einsum(
-            "bct,bcs->bts", q * scale, k * scale
-        )  # More stable with f16 than dividing afterwards
-        weight = th.softmax(weight.float(), dim=-1).type(weight.dtype)
-        a = th.einsum("bts,bcs->bct", weight, v)
+        a = F.scaled_dot_product_attention(
+            q.transpose(-1, -2), k.transpose(-1, -2), v.transpose(-1, -2)
+        ).transpose(-1, -2)
         return a.reshape(bs, -1, length)
 
     @staticmethod
@@ -378,14 +375,10 @@ class QKVAttention(nn.Module):
         assert width % (3 * self.n_heads) == 0
         ch = width // (3 * self.n_heads)
         q, k, v = qkv.chunk(3, dim=1)
-        scale = 1 / math.sqrt(math.sqrt(ch))
-        weight = th.einsum(
-            "bct,bcs->bts",
-            (q * scale).view(bs * self.n_heads, ch, length),
-            (k * scale).view(bs * self.n_heads, ch, length),
-        )  # More stable with f16 than dividing afterwards
-        weight = th.softmax(weight.float(), dim=-1).type(weight.dtype)
-        a = th.einsum("bts,bcs->bct", weight, v.reshape(bs * self.n_heads, ch, length))
+        q, k, v = (t.reshape(bs * self.n_heads, ch, length) for t in (q, k, v))
+        a = F.scaled_dot_product_attention(
+            q.transpose(-1, -2), k.transpose(-1, -2), v.transpose(-1, -2)
+        ).transpose(-1, -2)
         return a.reshape(bs, -1, length)
 
     @staticmethod
