@@ -5,3 +5,4 @@ classify_image_graph_def.pb
 logs/*
 .env
 *.egg-info
+docs/
