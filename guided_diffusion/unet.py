@@ -305,6 +305,25 @@ class AttentionBlock(nn.Module):
         return (x + h).reshape(b, c, *spatial)
 
 
+def qkv_attention(q, k, v):
+    """
+    Attention over [N x C x T] tensors of queries, keys, and values.
+
+    In fp16, softmax is computed in float32 for stability; otherwise
+    scaled_dot_product_attention is used.
+    """
+    if q.dtype == th.float16:
+        scale = 1 / math.sqrt(math.sqrt(q.shape[1]))
+        weight = th.einsum(
+            "bct,bcs->bts", q * scale, k * scale
+        )  # More stable with f16 than dividing afterwards
+        weight = th.softmax(weight.float(), dim=-1).type(weight.dtype)
+        return th.einsum("bts,bcs->bct", weight, v)
+    return F.scaled_dot_product_attention(
+        q.transpose(-1, -2), k.transpose(-1, -2), v.transpose(-1, -2)
+    ).transpose(-1, -2)
+
+
 def count_flops_attn(model, _x, y):
     """
     A counter for the `thop` package to count the operations in an
@@ -345,9 +364,7 @@ class QKVAttentionLegacy(nn.Module):
         assert width % (3 * self.n_heads) == 0
         ch = width // (3 * self.n_heads)
         q, k, v = qkv.reshape(bs * self.n_heads, ch * 3, length).split(ch, dim=1)
-        a = F.scaled_dot_product_attention(
-            q.transpose(-1, -2), k.transpose(-1, -2), v.transpose(-1, -2)
-        ).transpose(-1, -2)
+        a = qkv_attention(q, k, v)
         return a.reshape(bs, -1, length)
 
     @staticmethod
@@ -376,9 +393,7 @@ class QKVAttention(nn.Module):
         ch = width // (3 * self.n_heads)
         q, k, v = qkv.chunk(3, dim=1)
         q, k, v = (t.reshape(bs * self.n_heads, ch, length) for t in (q, k, v))
-        a = F.scaled_dot_product_attention(
-            q.transpose(-1, -2), k.transpose(-1, -2), v.transpose(-1, -2)
-        ).transpose(-1, -2)
+        a = qkv_attention(q, k, v)
         return a.reshape(bs, -1, length)
 
     @staticmethod

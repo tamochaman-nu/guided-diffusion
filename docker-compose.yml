@@ -1,10 +1,10 @@
 x-train-params: &train-params
   PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
   IMAGE_SIZE: "256"
-  NUM_CHANNELS: "256"
-  NUM_RES_BLOCKS: "1"
+  NUM_CHANNELS: "64"
+  NUM_RES_BLOCKS: "2"
   NUM_HEADS: "4"
-  NUM_HEAD_CHANNELS: "-1"
+  NUM_HEAD_CHANNELS: "64"
   ATTENTION_RESOLUTIONS: "32,16,8"
   CHANNEL_MULT: ""
   DROPOUT: "0.1"
@@ -16,9 +16,9 @@ x-train-params: &train-params
   USE_CHECKPOINT: "True"
   DIFFUSION_STEPS: "1000"
   NOISE_SCHEDULE: "cosine"
-  LR: "1e-4"
+  LR: "2e-5"
   WEIGHT_DECAY: "0.0"
-  BATCH_SIZE: "64"
+  BATCH_SIZE: "32"
   MICROBATCH: "16"
   USE_FP16: "True"
   LR_ANNEAL_STEPS: "100000"
@@ -28,6 +28,9 @@ x-train-params: &train-params
   RESUME_CHECKPOINT: ""
   EXTRA_TRAIN_FLAGS: ""
 
+# ホストのユーザーで実行し、logs/ などが root 所有にならないようにする
+x-user: &user "${HOST_UID:-1000}:${HOST_GID:-1000}"
+
 services:
   train-anime:
     build: &build
@@ -35,11 +38,13 @@ services:
       args:
         BASE_IMAGE: ${BASE_IMAGE:-pytorch/pytorch:2.4.1-cuda12.4-cudnn9-devel}
     image: &image guided-diffusion:${IMAGE_TAG:-latest}
+    user: *user
     container_name: guided-diffusion-train-anime
     command: /bin/bash run_train.sh
     environment:
       <<: *train-params
-      TRAIN_LOGDIR: /app/logs/anime
+      HOME: /tmp  # passwd に無い UID でもキャッシュ等を書けるように
+      TRAIN_LOGDIR: /app/logs/anime-lr25
     volumes:
       - ./:/app
       - ${HOST_DATA_DIR_ANIME:-./data/anime}:/app/data
@@ -57,11 +62,13 @@ services:
   train-ffhq:
     build: *build
     image: *image
+    user: *user
     container_name: guided-diffusion-train-ffhq
     command: /bin/bash run_train.sh
     environment:
       <<: *train-params
-      TRAIN_LOGDIR: /app/logs/ffhq
+      HOME: /tmp  # passwd に無い UID でもキャッシュ等を書けるように
+      TRAIN_LOGDIR: /app/logs/ffhq-lr25
     volumes:
       - ./:/app
       - ${HOST_DATA_DIR_FFHQ:-./data/ffhq}:/app/data
@@ -79,10 +86,12 @@ services:
   inference:
     build: *build
     image: *image
+    user: *user
     container_name: guided-diffusion-inference
     command: /bin/bash run_sample.sh
     environment:
       <<: *train-params
+      HOME: /tmp  # passwd に無い UID でもキャッシュ等を書けるように
       SAMPLE_LOGDIR: /app/logs/sample
       MODEL_PATH: ""
       TIMESTEP_RESPACING: ""

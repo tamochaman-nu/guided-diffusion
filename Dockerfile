@@ -10,7 +10,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY setup.py /app/
+# /app はバインドマウントされるので pip install -e せず PYTHONPATH で読み込む
+ENV PYTHONPATH=/app
 
 RUN pip install --no-cache-dir "blobfile>=1.0.5" torch tqdm mpi4py Pillow
 

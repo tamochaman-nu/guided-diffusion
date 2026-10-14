@@ -1,7 +1,6 @@
 #!/bin/bash
 set -e
 cd /app
-pip install -q -e .
 
 export OPENAI_LOGDIR="${SAMPLE_LOGDIR:-/app/logs/sample}"
 mkdir -p "$OPENAI_LOGDIR"
