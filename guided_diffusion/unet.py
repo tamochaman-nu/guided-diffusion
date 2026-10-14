@@ -1,4 +1,5 @@
 from abc import abstractmethod
+from functools import partial
 
 import math
 
@@ -453,6 +454,7 @@ class UNetModel(nn.Module):
         use_scale_shift_norm=False,
         resblock_updown=False,
         use_new_attention_order=False,
+        use_bf16=False,
     ):
         super().__init__()
 
@@ -470,7 +472,8 @@ class UNetModel(nn.Module):
         self.conv_resample = conv_resample
         self.num_classes = num_classes
         self.use_checkpoint = use_checkpoint
-        self.dtype = th.float16 if use_fp16 else th.float32
+        self.half_dtype = th.bfloat16 if use_bf16 else th.float16
+        self.dtype = self.half_dtype if use_fp16 or use_bf16 else th.float32
         self.num_heads = num_heads
         self.num_head_channels = num_head_channels
         self.num_heads_upsample = num_heads_upsample
@@ -625,11 +628,12 @@ class UNetModel(nn.Module):
 
     def convert_to_fp16(self):
         """
-        Convert the torso of the model to float16.
+        Convert the torso of the model to float16 (bfloat16 if use_bf16).
         """
-        self.input_blocks.apply(convert_module_to_f16)
-        self.middle_block.apply(convert_module_to_f16)
-        self.output_blocks.apply(convert_module_to_f16)
+        convert = partial(convert_module_to_f16, dtype=self.half_dtype)
+        self.input_blocks.apply(convert)
+        self.middle_block.apply(convert)
+        self.output_blocks.apply(convert)
 
     def convert_to_fp32(self):
         """

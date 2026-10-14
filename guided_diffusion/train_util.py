@@ -34,6 +34,7 @@ class TrainLoop:
         save_interval,
         resume_checkpoint,
         use_fp16=False,
+        use_bf16=False,
         fp16_scale_growth=1e-3,
         schedule_sampler=None,
         weight_decay=0.0,
@@ -69,6 +70,7 @@ class TrainLoop:
         self.mp_trainer = MixedPrecisionTrainer(
             model=self.model,
             use_fp16=self.use_fp16,
+            use_bf16=use_bf16,
             fp16_scale_growth=fp16_scale_growth,
         )
 

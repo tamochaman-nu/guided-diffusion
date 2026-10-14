@@ -10,16 +10,21 @@ from torch._utils import _flatten_dense_tensors, _unflatten_dense_tensors
 from . import logger
 
 INITIAL_LOG_LOSS_SCALE = 20.0
+# Below this, 1 / 2**lg_loss_scale overflows float32 when unscaling gradients
+# and corrupts every parameter, so stop training instead.
+MIN_LOG_LOSS_SCALE = 0.0
+# bf16 has no loss scale; stop after this many consecutive non-finite steps.
+MAX_CONSECUTIVE_NONFINITE = 20
 
 
-def convert_module_to_f16(l):
+def convert_module_to_f16(l, dtype=th.float16):
     """
-    Convert primitive modules to float16.
+    Convert primitive modules to float16 (or another half dtype such as bfloat16).
     """
     if isinstance(l, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
-        l.weight.data = l.weight.data.half()
+        l.weight.data = l.weight.data.to(dtype)
         if l.bias is not None:
-            l.bias.data = l.bias.data.half()
+            l.bias.data = l.bias.data.to(dtype)
 
 
 def convert_module_to_f32(l):
@@ -153,10 +158,18 @@ class MixedPrecisionTrainer:
         use_fp16=False,
         fp16_scale_growth=1e-3,
         initial_lg_loss_scale=INITIAL_LOG_LOSS_SCALE,
+        use_bf16=False,
     ):
         self.model = model
-        self.use_fp16 = use_fp16
+        # bf16 reuses the fp16 path (fp32 master params) but has the same
+        # exponent range as fp32, so it needs no loss scaling.
+        self.use_fp16 = use_fp16 or use_bf16
+        self.use_loss_scale = self.use_fp16 and not use_bf16
+        if not self.use_loss_scale:
+            initial_lg_loss_scale = 0.0
+            fp16_scale_growth = 0.0
         self.fp16_scale_growth = fp16_scale_growth
+        self.n_consecutive_nonfinite = 0
 
         self.model_params = list(self.model.parameters())
         self.master_params = self.model_params
@@ -174,7 +187,7 @@ class MixedPrecisionTrainer:
         zero_grad(self.model_params)
 
     def backward(self, loss: th.Tensor):
-        if self.use_fp16:
+        if self.use_loss_scale:
             loss_scale = 2 ** self.lg_loss_scale
             (loss * loss_scale).backward()
         else:
@@ -191,10 +204,22 @@ class MixedPrecisionTrainer:
         model_grads_to_master_grads(self.param_groups_and_shapes, self.master_params)
         grad_norm, param_norm = self._compute_norms(grad_scale=2 ** self.lg_loss_scale)
         if check_overflow(grad_norm):
-            self.lg_loss_scale -= 1
-            logger.log(f"Found NaN, decreased lg_loss_scale to {self.lg_loss_scale}")
             zero_master_grads(self.master_params)
+            self.n_consecutive_nonfinite += 1
+            if self.use_loss_scale:
+                self.lg_loss_scale -= 1
+                logger.log(f"Found NaN, decreased lg_loss_scale to {self.lg_loss_scale}")
+            else:
+                logger.log("Found NaN, skipped step")
+            if (
+                self.use_loss_scale and self.lg_loss_scale < MIN_LOG_LOSS_SCALE
+            ) or self.n_consecutive_nonfinite >= MAX_CONSECUTIVE_NONFINITE:
+                raise RuntimeError(
+                    f"Training diverged: {self.n_consecutive_nonfinite} consecutive "
+                    f"non-finite steps, lg_loss_scale={self.lg_loss_scale}"
+                )
             return False
+        self.n_consecutive_nonfinite = 0
 
         logger.logkv_mean("grad_norm", grad_norm)
         logger.logkv_mean("param_norm", param_norm)

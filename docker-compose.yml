@@ -17,10 +17,11 @@ x-train-params: &train-params
   DIFFUSION_STEPS: "1000"
   NOISE_SCHEDULE: "cosine"
   LR: "2e-5"
-  WEIGHT_DECAY: "0.0"
+  WEIGHT_DECAY: "0.05"  # improved-diffusion と同じく AdamW の decoupled weight decay
   BATCH_SIZE: "32"
   MICROBATCH: "16"
-  USE_FP16: "True"
+  USE_FP16: "False"
+  USE_BF16: "True"  # fp16 は出力付近の残差が 65504 を超えて NaN になるため bf16 を使う
   LR_ANNEAL_STEPS: "100000"
   EMA_RATE: "0.9999"
   LOG_INTERVAL: "10"
