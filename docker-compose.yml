@@ -28,6 +28,15 @@ x-train-params: &train-params
   SAVE_INTERVAL: "10000"
   RESUME_CHECKPOINT: ""
   EXTRA_TRAIN_FLAGS: ""
+  # "adm" = 従来の UNetModel / "mp" = EDM2 の magnitude-preserving MPUNetModel
+  # (mp ではゼロから学習。LR / WEIGHT_DECAY は使わず Adam(0.9, 0.99) + 下の MP_LR_* を使う)
+  ARCH: "mp"
+  MP_CLIP_ACT: "256"
+  # α(t) = MP_LR_REF / sqrt(max(t / MP_LR_REF_STEPS, 1)) × warmup。EDM2 の既定値
+  # (0.01 / 70k iter / 約 5k iter) はバッチ 2048・約 100 万 iter 前提なので、バッチ 32・10 万ステップ向けに調整した値
+  MP_LR_REF: "0.01"
+  MP_LR_REF_STEPS: "7000"
+  MP_LR_WARMUP_STEPS: "500"
 
 # ホストのユーザーで実行し、logs/ などが root 所有にならないようにする
 x-user: &user "${HOST_UID:-1000}:${HOST_GID:-1000}"
@@ -45,7 +54,7 @@ services:
     environment:
       <<: *train-params
       HOME: /tmp  # passwd に無い UID でもキャッシュ等を書けるように
-      TRAIN_LOGDIR: /app/logs/anime-lr25
+      TRAIN_LOGDIR: /app/logs/anime-mp
     volumes:
       - ./:/app
       - ${HOST_DATA_DIR_ANIME:-./data/anime}:/app/data
@@ -69,7 +78,7 @@ services:
     environment:
       <<: *train-params
       HOME: /tmp  # passwd に無い UID でもキャッシュ等を書けるように
-      TRAIN_LOGDIR: /app/logs/ffhq-lr25
+      TRAIN_LOGDIR: /app/logs/ffhq-mp
     volumes:
       - ./:/app
       - ${HOST_DATA_DIR_FFHQ:-./data/ffhq}:/app/data

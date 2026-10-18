@@ -1,15 +1,19 @@
 import copy
 import functools
+import math
 import os
 
 import blobfile as bf
 import torch as th
 import torch.distributed as dist
 from torch.nn.parallel.distributed import DistributedDataParallel as DDP
-from torch.optim import AdamW
+from torch.optim import Adam, AdamW
 
 from . import dist_util, logger
 from .fp16_util import MixedPrecisionTrainer
+# >>> ACT-MONITOR (temporary, remove after diagnosis) >>>
+from ._debug_act_monitor import maybe_attach_act_monitor
+# <<< ACT-MONITOR <<<
 from .nn import update_ema
 from .resample import LossAwareSampler, UniformSampler
 
@@ -39,7 +43,19 @@ class TrainLoop:
         schedule_sampler=None,
         weight_decay=0.0,
         lr_anneal_steps=0,
+        optimizer="adamw",
+        adam_betas=(0.9, 0.999),
+        lr_schedule="linear",
+        lr_ref_steps=0,
+        lr_warmup_steps=0,
     ):
+        """
+        :param optimizer: "adamw" (ADM default) or "adam" (EDM2; weight decay is not
+            used: forced weight normalization makes it meaningless).
+        :param lr_schedule: "linear" anneals lr to 0 over lr_anneal_steps (ADM);
+            "edm2" uses lr / sqrt(max(step / lr_ref_steps, 1)) with a linear warmup
+            over lr_warmup_steps. lr_anneal_steps still sets the training length.
+        """
         self.model = model
         self.diffusion = diffusion
         self.data = data
@@ -59,6 +75,9 @@ class TrainLoop:
         self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
         self.weight_decay = weight_decay
         self.lr_anneal_steps = lr_anneal_steps
+        self.lr_schedule = lr_schedule
+        self.lr_ref_steps = lr_ref_steps
+        self.lr_warmup_steps = lr_warmup_steps
 
         self.step = 0
         self.resume_step = 0
@@ -74,11 +93,19 @@ class TrainLoop:
             fp16_scale_growth=fp16_scale_growth,
         )
 
-        self.opt = AdamW(
-            self.mp_trainer.master_params, lr=self.lr, weight_decay=self.weight_decay
-        )
+        if optimizer == "adam":
+            self.opt = Adam(
+                self.mp_trainer.master_params, lr=self.lr, betas=adam_betas, weight_decay=0.0
+            )
+        else:
+            assert optimizer == "adamw", f"unknown optimizer: {optimizer}"
+            self.opt = AdamW(
+                self.mp_trainer.master_params, lr=self.lr, weight_decay=self.weight_decay
+            )
         if self.resume_step:
             self._load_optimizer_state()
+        if self.lr_schedule == "edm2":
+            self._set_edm2_lr(self.resume_step)
             # Model was resumed, either due to a restart or a checkpoint
             # being specified at the command line.
             self.ema_params = [
@@ -108,6 +135,9 @@ class TrainLoop:
                 )
             self.use_ddp = False
             self.ddp_model = self.model
+        # >>> ACT-MONITOR (temporary, remove after diagnosis) >>>
+        self.act_monitor = maybe_attach_act_monitor(self.model)
+        # <<< ACT-MONITOR <<<
 
     def _load_and_sync_parameters(self):
         resume_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
@@ -172,7 +202,15 @@ class TrainLoop:
             self.save()
 
     def run_step(self, batch, cond):
+        # >>> ACT-MONITOR (temporary, remove after diagnosis) >>>
+        if self.act_monitor is not None:
+            self.act_monitor.begin_step(self.step + self.resume_step)
+        # <<< ACT-MONITOR <<<
         self.forward_backward(batch, cond)
+        # >>> ACT-MONITOR (temporary, remove after diagnosis) >>>
+        if self.act_monitor is not None:
+            self.act_monitor.end_step()
+        # <<< ACT-MONITOR <<<
         took_step = self.mp_trainer.optimize(self.opt)
         if took_step:
             self._update_ema()
@@ -219,7 +257,22 @@ class TrainLoop:
         for rate, params in zip(self.ema_rate, self.ema_params):
             update_ema(params, self.mp_trainer.master_params, rate=rate)
 
+    def _set_edm2_lr(self, step):
+        lr = self.lr
+        if self.lr_ref_steps > 0:
+            lr /= math.sqrt(max(step / self.lr_ref_steps, 1))
+        if self.lr_warmup_steps > 0:
+            lr *= min((step + 1) / self.lr_warmup_steps, 1)
+        for param_group in self.opt.param_groups:
+            param_group["lr"] = lr
+        logger.logkv("lr", lr)
+
     def _anneal_lr(self):
+        if self.lr_schedule == "edm2":
+            # Set the lr for the next step.
+            self._set_edm2_lr(self.step + self.resume_step + 1)
+            return
+        assert self.lr_schedule == "linear", f"unknown lr_schedule: {self.lr_schedule}"
         if not self.lr_anneal_steps:
             return
         frac_done = (self.step + self.resume_step) / self.lr_anneal_steps

@@ -37,6 +37,25 @@ def main():
         class_cond=args.class_cond,
     )
 
+    if args.arch == "mp":
+        # EDM2 training setup: Adam(0.9, 0.99) without weight decay and the
+        # inverse-sqrt lr schedule; --lr and --weight_decay are not used.
+        logger.log(
+            f"arch=mp: Adam lr_ref={args.mp_lr_ref} t_ref={args.mp_lr_ref_steps} "
+            f"warmup={args.mp_lr_warmup_steps} (ignoring --lr/--weight_decay)"
+        )
+        opt_kwargs = dict(
+            lr=args.mp_lr_ref,
+            weight_decay=0.0,
+            optimizer="adam",
+            adam_betas=(0.9, 0.99),
+            lr_schedule="edm2",
+            lr_ref_steps=args.mp_lr_ref_steps,
+            lr_warmup_steps=args.mp_lr_warmup_steps,
+        )
+    else:
+        opt_kwargs = dict(lr=args.lr, weight_decay=args.weight_decay)
+
     logger.log("training...")
     TrainLoop(
         model=model,
@@ -44,7 +63,6 @@ def main():
         data=data,
         batch_size=args.batch_size,
         microbatch=args.microbatch,
-        lr=args.lr,
         ema_rate=args.ema_rate,
         log_interval=args.log_interval,
         save_interval=args.save_interval,
@@ -53,8 +71,8 @@ def main():
         use_bf16=args.use_bf16,
         fp16_scale_growth=args.fp16_scale_growth,
         schedule_sampler=schedule_sampler,
-        weight_decay=args.weight_decay,
         lr_anneal_steps=args.lr_anneal_steps,
+        **opt_kwargs,
     ).run_loop()
 
 
@@ -73,6 +91,13 @@ def create_argparser():
         resume_checkpoint="",
         use_fp16=False,
         fp16_scale_growth=1e-3,
+        # --arch mp (EDM2) lr schedule: mp_lr_ref / sqrt(max(step / mp_lr_ref_steps, 1))
+        # with a linear warmup. EDM2's defaults (lr_ref 0.01, t_ref 70k iterations,
+        # warmup 10M images ~ 5k iterations) assume batch size 2048; scale them to
+        # the actual batch size and training length (see docker-compose.yml).
+        mp_lr_ref=0.01,
+        mp_lr_ref_steps=70000,
+        mp_lr_warmup_steps=5000,
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()

@@ -175,8 +175,12 @@ class MixedPrecisionTrainer:
         self.master_params = self.model_params
         self.param_groups_and_shapes = None
         self.lg_loss_scale = initial_lg_loss_scale
+        # Models whose weights stay fp32 in half-precision mode (MPUNetModel) are
+        # their own master weights, so in-forward weight updates (forced weight
+        # normalization) act on the parameters the optimizer updates.
+        self.flat_master = self.use_fp16 and not getattr(model, "fp32_master_weights", False)
 
-        if self.use_fp16:
+        if self.flat_master:
             self.param_groups_and_shapes = get_param_groups_and_shapes(
                 self.model.named_parameters()
             )
@@ -201,7 +205,8 @@ class MixedPrecisionTrainer:
 
     def _optimize_fp16(self, opt: th.optim.Optimizer):
         logger.logkv_mean("lg_loss_scale", self.lg_loss_scale)
-        model_grads_to_master_grads(self.param_groups_and_shapes, self.master_params)
+        if self.flat_master:
+            model_grads_to_master_grads(self.param_groups_and_shapes, self.master_params)
         grad_norm, param_norm = self._compute_norms(grad_scale=2 ** self.lg_loss_scale)
         if check_overflow(grad_norm):
             zero_master_grads(self.master_params)
@@ -225,10 +230,12 @@ class MixedPrecisionTrainer:
         logger.logkv_mean("param_norm", param_norm)
 
         for p in self.master_params:
-            p.grad.mul_(1.0 / (2 ** self.lg_loss_scale))
+            if p.grad is not None:
+                p.grad.mul_(1.0 / (2 ** self.lg_loss_scale))
         opt.step()
         zero_master_grads(self.master_params)
-        master_params_to_model_params(self.param_groups_and_shapes, self.master_params)
+        if self.flat_master:
+            master_params_to_model_params(self.param_groups_and_shapes, self.master_params)
         self.lg_loss_scale += self.fp16_scale_growth
         return True
 
@@ -251,11 +258,11 @@ class MixedPrecisionTrainer:
 
     def master_params_to_state_dict(self, master_params):
         return master_params_to_state_dict(
-            self.model, self.param_groups_and_shapes, master_params, self.use_fp16
+            self.model, self.param_groups_and_shapes, master_params, self.flat_master
         )
 
     def state_dict_to_master_params(self, state_dict):
-        return state_dict_to_master_params(self.model, state_dict, self.use_fp16)
+        return state_dict_to_master_params(self.model, state_dict, self.flat_master)
 
 
 def check_overflow(value):

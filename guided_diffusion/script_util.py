@@ -4,6 +4,7 @@ import inspect
 from . import gaussian_diffusion as gd
 from .respace import SpacedDiffusion, space_timesteps
 from .unet import SuperResModel, UNetModel, EncoderUNetModel
+from .unet_mp import MPUNetModel
 
 NUM_CLASSES = 1000
 
@@ -61,6 +62,8 @@ def model_and_diffusion_defaults():
         use_fp16=False,
         use_bf16=False,
         use_new_attention_order=False,
+        arch="adm",  # "adm" (UNetModel) or "mp" (EDM2 magnitude-preserving MPUNetModel)
+        mp_clip_act=256.0,  # --arch mp: clip block outputs to +-this; <= 0 disables
     )
     res.update(diffusion_defaults())
     return res
@@ -97,6 +100,8 @@ def create_model_and_diffusion(
     use_fp16,
     use_new_attention_order,
     use_bf16=False,
+    arch="adm",
+    mp_clip_act=256.0,
 ):
     model = create_model(
         image_size,
@@ -116,6 +121,10 @@ def create_model_and_diffusion(
         use_fp16=use_fp16,
         use_new_attention_order=use_new_attention_order,
         use_bf16=use_bf16,
+        arch=arch,
+        mp_clip_act=mp_clip_act,
+        diffusion_steps=diffusion_steps,
+        noise_schedule=noise_schedule,
     )
     diffusion = create_gaussian_diffusion(
         steps=diffusion_steps,
@@ -148,6 +157,10 @@ def create_model(
     use_fp16=False,
     use_new_attention_order=False,
     use_bf16=False,
+    arch="adm",
+    mp_clip_act=256.0,
+    diffusion_steps=1000,
+    noise_schedule="linear",
 ):
     if channel_mult == "":
         if image_size == 512:
@@ -167,6 +180,27 @@ def create_model(
     for res in attention_resolutions.split(","):
         attention_ds.append(image_size // int(res))
 
+    if arch == "mp":
+        return MPUNetModel(
+            image_size=image_size,
+            in_channels=3,
+            model_channels=num_channels,
+            out_channels=(3 if not learn_sigma else 6),
+            num_res_blocks=num_res_blocks,
+            attention_resolutions=tuple(attention_ds),
+            dropout=dropout,
+            channel_mult=channel_mult,
+            num_classes=(NUM_CLASSES if class_cond else None),
+            use_checkpoint=use_checkpoint,
+            use_fp16=use_fp16,
+            use_bf16=use_bf16,
+            num_heads=num_heads,
+            num_head_channels=num_head_channels,
+            diffusion_steps=diffusion_steps,
+            noise_schedule=noise_schedule,
+            clip_act=mp_clip_act if mp_clip_act > 0 else None,
+        )
+    assert arch == "adm", f"unknown arch: {arch}"
     return UNetModel(
         image_size=image_size,
         in_channels=3,
