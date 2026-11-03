@@ -108,6 +108,7 @@ services:
       NUM_SAMPLES: "64"
       SAMPLE_BATCH_SIZE: "16"
       USE_DDIM: "False"
+      SAVE_PNG: "True"  # npz に加えて PNG と grid.png も保存する
     volumes:
       - ./:/app
     shm_size: '8gb'

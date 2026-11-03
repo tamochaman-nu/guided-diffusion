@@ -28,4 +28,4 @@ python scripts/image_sample.py --model_path "$MODEL" $MODEL_FLAGS \
   --diffusion_steps ${DIFFUSION_STEPS:-1000} --noise_schedule ${NOISE_SCHEDULE:-cosine} \
   --timestep_respacing "${TIMESTEP_RESPACING}" \
   --num_samples ${NUM_SAMPLES:-64} --batch_size ${SAMPLE_BATCH_SIZE:-16} \
-  --use_ddim ${USE_DDIM:-False}
+  --use_ddim ${USE_DDIM:-False} --save_png ${SAVE_PNG:-False}

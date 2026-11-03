@@ -9,6 +9,7 @@ import os
 import numpy as np
 import torch as th
 import torch.distributed as dist
+from PIL import Image
 
 from guided_diffusion import dist_util, logger
 from guided_diffusion.script_util import (
@@ -85,9 +86,27 @@ def main():
             np.savez(out_path, arr, label_arr)
         else:
             np.savez(out_path, arr)
+        if args.save_png:
+            save_pngs(arr, os.path.join(logger.get_dir(), f"png_{shape_str}"))
 
     dist.barrier()
     logger.log("sampling complete")
+
+
+def save_pngs(arr, out_dir):
+    """Save each sample as a PNG plus all samples tiled into grid.png."""
+    os.makedirs(out_dir, exist_ok=True)
+    for i, img in enumerate(arr):
+        Image.fromarray(img).save(os.path.join(out_dir, f"{i:06d}.png"))
+    n, h, w, c = arr.shape
+    cols = int(np.ceil(np.sqrt(n)))
+    rows = int(np.ceil(n / cols))
+    grid = np.zeros((rows * h, cols * w, c), dtype=arr.dtype)
+    for i, img in enumerate(arr):
+        r, q = divmod(i, cols)
+        grid[r * h : (r + 1) * h, q * w : (q + 1) * w] = img
+    Image.fromarray(grid).save(os.path.join(out_dir, "grid.png"))
+    logger.log(f"saved {n} PNGs and grid.png to {out_dir}")
 
 
 def create_argparser():
@@ -97,6 +116,7 @@ def create_argparser():
         batch_size=16,
         use_ddim=False,
         model_path="",
+        save_png=False,  # also write each sample (and a grid) as PNG
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
