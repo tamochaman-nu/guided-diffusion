@@ -239,11 +239,17 @@ class MPUNetModel(nn.Module):
         attn_balance=0.3,
         label_balance=0.5,
         concat_balance=0.5,
+        attr_dims=None,
     ):
         super().__init__()
+        assert not (num_classes and attr_dims), "use either num_classes or attr_dims"
         self.image_size = image_size
         self.out_channels = out_channels
         self.num_classes = num_classes
+        # Multi-attribute conditioning: y is [N x len(attr_dims)] label indices,
+        # -1 = unknown / dropped (CFG null for that attribute).
+        self.attr_dims = tuple(attr_dims) if attr_dims else None
+        self.label_dim = sum(self.attr_dims) if self.attr_dims else (num_classes or 0)
         self.dtype = (
             th.bfloat16 if use_bf16 else th.float16 if use_fp16 else th.float32
         )
@@ -288,7 +294,7 @@ class MPUNetModel(nn.Module):
         # Embedding.
         self.emb_fourier = MPFourier(cnoise)
         self.emb_noise = MPConv(cnoise, cemb, kernel=[])
-        self.emb_label = MPConv(num_classes, cemb, kernel=[]) if num_classes else None
+        self.emb_label = MPConv(self.label_dim, cemb, kernel=[]) if self.label_dim else None
 
         # Encoder.
         self.enc = nn.ModuleDict()
@@ -350,9 +356,23 @@ class MPUNetModel(nn.Module):
         Class labels -> one-hot * sqrt(num_classes). The unconditional (CFG null)
         label is the all-zero vector: pass y=None, label -1 for some entries, or a
         float [N x num_classes] tensor directly.
+
+        With attr_dims, y is [N x num_attrs] indices; the one-hots of all
+        attributes are concatenated and scaled by sqrt(label_dim / num_attrs) so a
+        fully specified label has unit RMS. Unknown attributes (-1) contribute zeros.
         """
         if y is None:
-            return th.zeros(n, self.num_classes, device=device)
+            return th.zeros(n, self.label_dim, device=device)
+        if self.attr_dims:
+            scale = math.sqrt(self.label_dim / len(self.attr_dims))
+            if y.is_floating_point():
+                return y.float().reshape(n, self.label_dim) * scale
+            y = y.reshape(n, len(self.attr_dims))
+            parts = [
+                F.one_hot(y[:, i].clamp(min=0), d).float() * (y[:, i] >= 0).float()[:, None]
+                for i, d in enumerate(self.attr_dims)
+            ]
+            return th.cat(parts, dim=1) * scale
         if y.is_floating_point():
             vec = y.float().reshape(n, self.num_classes)
         else:

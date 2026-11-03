@@ -48,6 +48,8 @@ class TrainLoop:
         lr_schedule="linear",
         lr_ref_steps=0,
         lr_warmup_steps=0,
+        cond_drop_prob=0.0,
+        attr_drop_prob=0.0,
     ):
         """
         :param optimizer: "adamw" (ADM default) or "adam" (EDM2; weight decay is not
@@ -55,6 +57,10 @@ class TrainLoop:
         :param lr_schedule: "linear" anneals lr to 0 over lr_anneal_steps (ADM);
             "edm2" uses lr / sqrt(max(step / lr_ref_steps, 1)) with a linear warmup
             over lr_warmup_steps. lr_anneal_steps still sets the training length.
+        :param cond_drop_prob: for CFG training, probability of replacing the whole
+            label "y" with the null label (-1) per sample.
+        :param attr_drop_prob: probability of dropping each attribute of a
+            multi-attribute "y" independently (enables partial conditioning).
         """
         self.model = model
         self.diffusion = diffusion
@@ -78,6 +84,8 @@ class TrainLoop:
         self.lr_schedule = lr_schedule
         self.lr_ref_steps = lr_ref_steps
         self.lr_warmup_steps = lr_warmup_steps
+        self.cond_drop_prob = cond_drop_prob
+        self.attr_drop_prob = attr_drop_prob
 
         self.step = 0
         self.resume_step = 0
@@ -144,13 +152,14 @@ class TrainLoop:
 
         if resume_checkpoint:
             self.resume_step = parse_resume_step_from_filename(resume_checkpoint)
+            # dist_util.load_state_dict broadcasts over MPI, so every rank must call
+            # it (calling it on rank 0 only deadlocks multi-GPU resume).
+            state_dict = dist_util.load_state_dict(
+                resume_checkpoint, map_location=dist_util.dev()
+            )
             if dist.get_rank() == 0:
                 logger.log(f"loading model from checkpoint: {resume_checkpoint}...")
-                self.model.load_state_dict(
-                    dist_util.load_state_dict(
-                        resume_checkpoint, map_location=dist_util.dev()
-                    )
-                )
+                self.model.load_state_dict(state_dict)
 
         dist_util.sync_params(self.model.parameters())
 
@@ -160,11 +169,12 @@ class TrainLoop:
         main_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
         ema_checkpoint = find_ema_checkpoint(main_checkpoint, self.resume_step, rate)
         if ema_checkpoint:
+            # Collective MPI broadcast: all ranks must call it (see above).
+            state_dict = dist_util.load_state_dict(
+                ema_checkpoint, map_location=dist_util.dev()
+            )
             if dist.get_rank() == 0:
                 logger.log(f"loading EMA from checkpoint: {ema_checkpoint}...")
-                state_dict = dist_util.load_state_dict(
-                    ema_checkpoint, map_location=dist_util.dev()
-                )
                 ema_params = self.mp_trainer.state_dict_to_master_params(state_dict)
 
         dist_util.sync_params(ema_params)
@@ -225,6 +235,8 @@ class TrainLoop:
                 k: v[i : i + self.microbatch].to(dist_util.dev())
                 for k, v in cond.items()
             }
+            if "y" in micro_cond and (self.cond_drop_prob > 0 or self.attr_drop_prob > 0):
+                micro_cond["y"] = self._drop_labels(micro_cond["y"])
             last_batch = (i + self.microbatch) >= batch.shape[0]
             t, weights = self.schedule_sampler.sample(micro.shape[0], dist_util.dev())
 
@@ -256,6 +268,15 @@ class TrainLoop:
     def _update_ema(self):
         for rate, params in zip(self.ema_rate, self.ema_params):
             update_ema(params, self.mp_trainer.master_params, rate=rate)
+
+    def _drop_labels(self, y):
+        """Replace labels by the null label -1 (CFG training)."""
+        y = y.clone()
+        drop_all = th.rand(y.shape[0], device=y.device) < self.cond_drop_prob
+        y[drop_all] = -1
+        if y.ndim == 2 and self.attr_drop_prob > 0:
+            y[th.rand(y.shape, device=y.device) < self.attr_drop_prob] = -1
+        return y
 
     def _set_edm2_lr(self, step):
         lr = self.lr

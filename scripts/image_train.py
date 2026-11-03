@@ -3,6 +3,7 @@ Train a diffusion model on images.
 """
 
 import argparse
+import os
 
 from guided_diffusion import dist_util, logger
 from guided_diffusion.image_datasets import load_data
@@ -30,11 +31,15 @@ def main():
     schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
 
     logger.log("creating data loader...")
+    attr_file = None
+    if args.attr_cond:
+        attr_file = args.attr_file or os.path.join(args.data_dir, "metadata.jsonl")
     data = load_data(
         data_dir=args.data_dir,
         batch_size=args.batch_size,
         image_size=args.image_size,
         class_cond=args.class_cond,
+        attr_file=attr_file,
     )
 
     if args.arch == "mp":
@@ -72,6 +77,8 @@ def main():
         fp16_scale_growth=args.fp16_scale_growth,
         schedule_sampler=schedule_sampler,
         lr_anneal_steps=args.lr_anneal_steps,
+        cond_drop_prob=args.cond_drop_prob,
+        attr_drop_prob=args.attr_drop_prob,
         **opt_kwargs,
     ).run_loop()
 
@@ -98,6 +105,12 @@ def create_argparser():
         mp_lr_ref=0.01,
         mp_lr_ref_steps=70000,
         mp_lr_warmup_steps=5000,
+        # --attr_cond: labels from attr_file (default <data_dir>/metadata.jsonl).
+        # CFG training drops the whole label with cond_drop_prob and each attribute
+        # with attr_drop_prob (so e.g. only gender can be specified at sampling).
+        attr_file="",
+        cond_drop_prob=0.0,
+        attr_drop_prob=0.0,
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()

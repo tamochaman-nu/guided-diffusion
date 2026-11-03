@@ -7,6 +7,8 @@ from mpi4py import MPI
 import numpy as np
 from torch.utils.data import DataLoader, Dataset
 
+from . import attributes, logger
+
 
 def load_data(
     *,
@@ -17,6 +19,7 @@ def load_data(
     deterministic=False,
     random_crop=False,
     random_flip=True,
+    attr_file=None,
 ):
     """
     For a dataset, create a generator over (images, kwargs) pairs.
@@ -35,6 +38,9 @@ def load_data(
     :param deterministic: if True, yield results in a deterministic order.
     :param random_crop: if True, randomly crop the images for augmentation.
     :param random_flip: if True, randomly flip the images for augmentation.
+    :param attr_file: if set, a metadata.jsonl manifest (see attributes.py); "y"
+                      is then an int64 [len(ATTRIBUTES)] vector of attribute labels
+                      (-1 = unknown). Horizontal flips keep gender and view.
     """
     if not data_dir:
         raise ValueError("unspecified data directory")
@@ -46,6 +52,11 @@ def load_data(
         class_names = [bf.basename(path).split("_")[0] for path in all_files]
         sorted_classes = {x: i for i, x in enumerate(sorted(set(class_names)))}
         classes = [sorted_classes[x] for x in class_names]
+    if attr_file:
+        assert not class_cond, "use either class_cond or attr_file"
+        classes = attributes.load_manifest(attr_file, all_files, data_dir)
+        if MPI.COMM_WORLD.Get_rank() == 0:
+            logger.log(f"attribute labels from {attr_file}: {attributes.summarize(classes)}")
     dataset = ImageDataset(
         image_size,
         all_files,

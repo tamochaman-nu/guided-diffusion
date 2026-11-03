@@ -24,11 +24,13 @@ def setup_dist():
     """
     if dist.is_initialized():
         return
+    # Must be set before any CUDA call (th.cuda.is_available() included), or every
+    # rank would see all GPUs and use cuda:0.
+    os.environ["CUDA_VISIBLE_DEVICES"] = f"{MPI.COMM_WORLD.Get_rank() % GPUS_PER_NODE}"
     if th.cuda.is_available():
         th.backends.cudnn.benchmark = True
         th.backends.cuda.matmul.allow_tf32 = True
         th.backends.cudnn.allow_tf32 = True
-    os.environ["CUDA_VISIBLE_DEVICES"] = f"{MPI.COMM_WORLD.Get_rank() % GPUS_PER_NODE}"
 
     comm = MPI.COMM_WORLD
     backend = "gloo" if not th.cuda.is_available() or comm.size == 1 else "nccl"

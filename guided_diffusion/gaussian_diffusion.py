@@ -38,6 +38,19 @@ def get_named_beta_schedule(schedule_name, num_diffusion_timesteps):
             num_diffusion_timesteps,
             lambda t: math.cos((t + 0.008) / 1.008 * math.pi / 2) ** 2,
         )
+    elif schedule_name.startswith("cosine_shift"):
+        # Shifted cosine (Hoogeboom et al. 2023, "simple diffusion"): the cosine
+        # schedule with log-SNR shifted by -2*log(k), e.g. "cosine_shift4" for
+        # 256px images, so that the coarse structure sees the same noise levels
+        # as a 256/k px image under the plain cosine schedule.
+        k = float(schedule_name[len("cosine_shift"):])
+        assert k > 0, f"invalid shift in {schedule_name}"
+
+        def shifted_alpha_bar(t):
+            a = math.cos((t + 0.008) / 1.008 * math.pi / 2) ** 2
+            return a / (a + k ** 2 * (1 - a))  # sigmoid(logSNR - 2 log k)
+
+        return betas_for_alpha_bar(num_diffusion_timesteps, shifted_alpha_bar)
     else:
         raise NotImplementedError(f"unknown beta schedule: {schedule_name}")
 

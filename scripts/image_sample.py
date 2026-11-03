@@ -11,7 +11,7 @@ import torch as th
 import torch.distributed as dist
 from PIL import Image
 
-from guided_diffusion import dist_util, logger
+from guided_diffusion import attributes, dist_util, logger
 from guided_diffusion.script_util import (
     NUM_CLASSES,
     model_and_diffusion_defaults,
@@ -39,6 +39,19 @@ def main():
         model.convert_to_fp16()
     model.eval()
 
+    if args.attr_cond:
+        attr_labels = [
+            attributes.parse_attribute("gender", args.sample_gender),
+            attributes.parse_attribute("view", args.sample_view),
+        ]
+        logger.log(
+            f"attributes: gender={args.sample_gender} view={args.sample_view} "
+            f"guidance_scale={args.guidance_scale}"
+        )
+        model_fn = cfg_model(model, args.guidance_scale)
+    else:
+        model_fn = model
+
     logger.log("sampling...")
     all_images = []
     all_labels = []
@@ -49,14 +62,19 @@ def main():
                 low=0, high=NUM_CLASSES, size=(args.batch_size,), device=dist_util.dev()
             )
             model_kwargs["y"] = classes
+        if args.attr_cond:
+            model_kwargs["y"] = th.tensor(
+                [attr_labels] * args.batch_size, device=dist_util.dev()
+            )
         sample_fn = (
             diffusion.p_sample_loop if not args.use_ddim else diffusion.ddim_sample_loop
         )
         sample = sample_fn(
-            model,
+            model_fn,
             (args.batch_size, 3, args.image_size, args.image_size),
             clip_denoised=args.clip_denoised,
             model_kwargs=model_kwargs,
+            device=dist_util.dev(),
         )
         sample = ((sample + 1) * 127.5).clamp(0, 255).to(th.uint8)
         sample = sample.permute(0, 2, 3, 1)
@@ -93,6 +111,25 @@ def main():
     logger.log("sampling complete")
 
 
+def cfg_model(model, scale):
+    """
+    Classifier-free guidance on the epsilon channels: eps_u + s * (eps_c - eps_u),
+    where eps_u uses the null label (-1 for every attribute). Variance channels
+    (learn_sigma) are taken from the conditional output. scale=1 disables CFG.
+    """
+    if scale == 1:
+        return model
+
+    def fn(x, t, y=None, **kwargs):
+        out_c = model(x, t, y=y, **kwargs)
+        out_u = model(x, t, y=th.full_like(y, -1), **kwargs)
+        c = x.shape[1]
+        eps = out_u[:, :c] + scale * (out_c[:, :c] - out_u[:, :c])
+        return th.cat([eps, out_c[:, c:]], dim=1)
+
+    return fn
+
+
 def save_pngs(arr, out_dir):
     """Save each sample as a PNG plus all samples tiled into grid.png."""
     os.makedirs(out_dir, exist_ok=True)
@@ -117,6 +154,11 @@ def create_argparser():
         use_ddim=False,
         model_path="",
         save_png=False,  # also write each sample (and a grid) as PNG
+        # --attr_cond models: attributes to generate ("any" = unspecified) and
+        # the classifier-free guidance scale (1.0 = no guidance)
+        sample_gender="any",
+        sample_view="any",
+        guidance_scale=1.0,
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()

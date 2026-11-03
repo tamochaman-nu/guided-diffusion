@@ -5,6 +5,7 @@ from . import gaussian_diffusion as gd
 from .respace import SpacedDiffusion, space_timesteps
 from .unet import SuperResModel, UNetModel, EncoderUNetModel
 from .unet_mp import MPUNetModel
+from .attributes import ATTR_DIMS
 
 NUM_CLASSES = 1000
 
@@ -64,6 +65,7 @@ def model_and_diffusion_defaults():
         use_new_attention_order=False,
         arch="adm",  # "adm" (UNetModel) or "mp" (EDM2 magnitude-preserving MPUNetModel)
         mp_clip_act=256.0,  # --arch mp: clip block outputs to +-this; <= 0 disables
+        attr_cond=False,  # --arch mp: condition on gender / view labels (attributes.py)
     )
     res.update(diffusion_defaults())
     return res
@@ -102,6 +104,7 @@ def create_model_and_diffusion(
     use_bf16=False,
     arch="adm",
     mp_clip_act=256.0,
+    attr_cond=False,
 ):
     model = create_model(
         image_size,
@@ -123,6 +126,7 @@ def create_model_and_diffusion(
         use_bf16=use_bf16,
         arch=arch,
         mp_clip_act=mp_clip_act,
+        attr_cond=attr_cond,
         diffusion_steps=diffusion_steps,
         noise_schedule=noise_schedule,
     )
@@ -161,6 +165,7 @@ def create_model(
     mp_clip_act=256.0,
     diffusion_steps=1000,
     noise_schedule="linear",
+    attr_cond=False,
 ):
     if channel_mult == "":
         if image_size == 512:
@@ -199,8 +204,10 @@ def create_model(
             diffusion_steps=diffusion_steps,
             noise_schedule=noise_schedule,
             clip_act=mp_clip_act if mp_clip_act > 0 else None,
+            attr_dims=ATTR_DIMS if attr_cond else None,
         )
     assert arch == "adm", f"unknown arch: {arch}"
+    assert not attr_cond, "attr_cond is only supported with --arch mp"
     return UNetModel(
         image_size=image_size,
         in_channels=3,

@@ -21,11 +21,13 @@ MODEL_FLAGS="--image_size ${IMAGE_SIZE:-64} --num_channels ${NUM_CHANNELS:-128} 
 --resblock_updown ${RESBLOCK_UPDOWN:-False} \
 --use_new_attention_order ${USE_NEW_ATTENTION_ORDER:-False} \
 --use_fp16 ${USE_FP16:-False} --use_bf16 ${USE_BF16:-False} \
---arch ${ARCH:-adm} --mp_clip_act ${MP_CLIP_ACT:-256}"
+--arch ${ARCH:-adm} --mp_clip_act ${MP_CLIP_ACT:-256} --attr_cond ${ATTR_COND:-False}"
 [ -n "$CHANNEL_MULT" ] && MODEL_FLAGS="$MODEL_FLAGS --channel_mult $CHANNEL_MULT"
 
 python scripts/image_sample.py --model_path "$MODEL" $MODEL_FLAGS \
   --diffusion_steps ${DIFFUSION_STEPS:-1000} --noise_schedule ${NOISE_SCHEDULE:-cosine} \
   --timestep_respacing "${TIMESTEP_RESPACING}" \
   --num_samples ${NUM_SAMPLES:-64} --batch_size ${SAMPLE_BATCH_SIZE:-16} \
-  --use_ddim ${USE_DDIM:-False} --save_png ${SAVE_PNG:-False}
+  --use_ddim ${USE_DDIM:-False} --save_png ${SAVE_PNG:-False} \
+  --sample_gender ${SAMPLE_GENDER:-any} --sample_view ${SAMPLE_VIEW:-any} \
+  --guidance_scale ${GUIDANCE_SCALE:-1.0}
