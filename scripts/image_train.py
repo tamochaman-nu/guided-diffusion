@@ -101,7 +101,7 @@ def create_argparser():
         # --arch mp (EDM2) lr schedule: mp_lr_ref / sqrt(max(step / mp_lr_ref_steps, 1))
         # with a linear warmup. EDM2's defaults (lr_ref 0.01, t_ref 70k iterations,
         # warmup 10M images ~ 5k iterations) assume batch size 2048; scale them to
-        # the actual batch size and training length (see docker-compose.yml).
+        # the actual batch size and training length (see cfgs/*.cfg).
         mp_lr_ref=0.01,
         mp_lr_ref_steps=70000,
         mp_lr_warmup_steps=5000,

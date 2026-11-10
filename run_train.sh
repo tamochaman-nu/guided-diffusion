@@ -2,8 +2,15 @@
 set -e
 cd /app
 
+# モデル・拡散過程・学習のパラメータ (cfgs/*.cfg。環境変数の値が優先)
+. scripts/load_cfg.sh
+load_cfg "${TRAIN_CFG:?TRAIN_CFG (cfgs/*.cfg) is not set}"
+
 export OPENAI_LOGDIR="${TRAIN_LOGDIR:-/app/logs/train}"
 mkdir -p "$OPENAI_LOGDIR"
+# 同じログディレクトリで別のモデル・スケジュールを学習 (再開) しないよう、前回の設定と照合してから保存する
+check_cfg_compatible "$OPENAI_LOGDIR/train.cfg"
+save_cfg "$OPENAI_LOGDIR/train.cfg"
 
 MODEL_FLAGS="--image_size ${IMAGE_SIZE:-64} --num_channels ${NUM_CHANNELS:-128} \
 --num_res_blocks ${NUM_RES_BLOCKS:-3} --num_heads ${NUM_HEADS:-4} \

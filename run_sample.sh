@@ -12,6 +12,11 @@ if [ -z "$MODEL" ]; then
 fi
 [ -z "$MODEL" ] && { echo "MODEL_PATH not set and no ema checkpoint found" >&2; exit 1; }
 
+# モデルの設定: TRAIN_CFG 未指定ならチェックポイントと同じディレクトリの train.cfg (学習時に保存)
+CFG="${TRAIN_CFG:-$(dirname "$MODEL")/train.cfg}"
+. scripts/load_cfg.sh
+load_cfg "$CFG" || { echo "set TRAIN_CFG (e.g. cfgs/mp128.cfg) for checkpoints without train.cfg" >&2; exit 1; }
+
 MODEL_FLAGS="--image_size ${IMAGE_SIZE:-64} --num_channels ${NUM_CHANNELS:-128} \
 --num_res_blocks ${NUM_RES_BLOCKS:-3} --num_heads ${NUM_HEADS:-4} \
 --num_head_channels ${NUM_HEAD_CHANNELS:--1} \

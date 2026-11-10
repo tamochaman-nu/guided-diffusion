@@ -1,49 +1,10 @@
-x-train-params: &train-params
+# モデル・拡散過程・学習のパラメータは cfgs/<名前>.cfg に書き、.env の CFG_ANIME / CFG_FFHQ で
+# 選ぶ (既定は mp128)。ログは logs/<データ>-<名前> に分かれ、使った設定が train.cfg として保存される。
+# 一時的に値を変えるときは docker compose run -e KEY=VALUE (cfg より優先)。
+
+x-runtime-env: &runtime-env
   PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
-  IMAGE_SIZE: "256"
-  NUM_CHANNELS: "128"
-  NUM_RES_BLOCKS: "2"
-  NUM_HEADS: "4"
-  NUM_HEAD_CHANNELS: "64"
-  ATTENTION_RESOLUTIONS: "32,16,8"
-  CHANNEL_MULT: ""
-  DROPOUT: "0"
-  LEARN_SIGMA: "True"
-  CLASS_COND: "False"
-  USE_SCALE_SHIFT_NORM: "True"
-  RESBLOCK_UPDOWN: "True"
-  USE_NEW_ATTENTION_ORDER: "False"
-  USE_CHECKPOINT: "True"
-  DIFFUSION_STEPS: "1000"
-  NOISE_SCHEDULE: "cosine_shift4"
-  LR: "2e-5"
-  WEIGHT_DECAY: "0.05"  # improved-diffusion と同じく AdamW の decoupled weight decay
-  BATCH_SIZE: "32"
-  MICROBATCH: "16"
-  USE_FP16: "False"
-  USE_BF16: "True"  # fp16 は出力付近の残差が 65504 を超えて NaN になるため bf16 を使う
-  LR_ANNEAL_STEPS: "100000"
-  EMA_RATE: "0.9995,0.9999"
-  LOG_INTERVAL: "10"
-  SAVE_INTERVAL: "10000"
-  RESUME_CHECKPOINT: ""
-  EXTRA_TRAIN_FLAGS: ""
-  # "adm" = 従来の UNetModel / "mp" = EDM2 の magnitude-preserving MPUNetModel
-  # (mp ではゼロから学習。LR / WEIGHT_DECAY は使わず Adam(0.9, 0.99) + 下の MP_LR_* を使う)
-  ARCH: "mp"
-  MP_CLIP_ACT: "256"
-  # α(t) = MP_LR_REF / sqrt(max(t / MP_LR_REF_STEPS, 1)) × warmup。EDM2 の既定値
-  # (0.01 / 70k iter / 約 5k iter) はバッチ 2048・約 100 万 iter 前提なので、バッチ 32・10 万ステップ向けに調整した値
-  MP_LR_REF: "0.01"
-  MP_LR_REF_STEPS: "14000"
-  # 属性 (性別 / 顔の向き) による条件付け (ARCH=mp のみ)。ラベルは <データ>/metadata.jsonl
-  # (形式は guided_diffusion/attributes.py)。CFG 用に、ラベル全体を COND_DROP_PROB、
-  # 各属性を ATTR_DROP_PROB の確率で「指定なし」にして学習する
-  ATTR_COND: "False"
-  ATTR_FILE: ""
-  COND_DROP_PROB: "0.1"
-  ATTR_DROP_PROB: "0.1"
-  MP_LR_WARMUP_STEPS: "1000"
+  HOME: /tmp  # passwd に無い UID でもキャッシュ等を書けるように
 
 # ホストのユーザーで実行し、logs/ などが root 所有にならないようにする
 x-user: &user "${HOST_UID:-1000}:${HOST_GID:-1000}"
@@ -59,9 +20,11 @@ services:
     container_name: guided-diffusion-train-anime
     command: /bin/bash run_train.sh
     environment:
-      <<: *train-params
-      HOME: /tmp  # passwd に無い UID でもキャッシュ等を書けるように
-      TRAIN_LOGDIR: /app/logs/anime-mp128
+      <<: *runtime-env
+      TRAIN_CFG: cfgs/${CFG_ANIME:-mp128}.cfg
+      TRAIN_LOGDIR: /app/logs/anime-${CFG_ANIME:-mp128}
+      RESUME_CHECKPOINT: ""  # 空ならログディレクトリの最新 modelNNNNNN.pt から再開
+      EXTRA_TRAIN_FLAGS: ""
     volumes:
       - ./:/app
       - ${HOST_DATA_DIR_ANIME:-./data/anime}:/app/data
@@ -83,9 +46,11 @@ services:
     container_name: guided-diffusion-train-ffhq
     command: /bin/bash run_train.sh
     environment:
-      <<: *train-params
-      HOME: /tmp  # passwd に無い UID でもキャッシュ等を書けるように
-      TRAIN_LOGDIR: /app/logs/ffhq-mp128
+      <<: *runtime-env
+      TRAIN_CFG: cfgs/${CFG_FFHQ:-mp128}.cfg
+      TRAIN_LOGDIR: /app/logs/ffhq-${CFG_FFHQ:-mp128}
+      RESUME_CHECKPOINT: ""  # 空ならログディレクトリの最新 modelNNNNNN.pt から再開
+      EXTRA_TRAIN_FLAGS: ""
     volumes:
       - ./:/app
       - ${HOST_DATA_DIR_FFHQ:-./data/ffhq}:/app/data
@@ -107,10 +72,12 @@ services:
     container_name: guided-diffusion-inference
     command: /bin/bash run_sample.sh
     environment:
-      <<: *train-params
-      HOME: /tmp  # passwd に無い UID でもキャッシュ等を書けるように
+      <<: *runtime-env
       SAMPLE_LOGDIR: /app/logs/sample
       MODEL_PATH: ""
+      # 空なら MODEL_PATH と同じディレクトリの train.cfg (学習時に保存された設定) を使う。
+      # train.cfg が無い古いログでは cfgs/mp128.cfg などを指定する
+      TRAIN_CFG: ""
       TIMESTEP_RESPACING: ""
       NUM_SAMPLES: "64"
       SAMPLE_BATCH_SIZE: "16"
